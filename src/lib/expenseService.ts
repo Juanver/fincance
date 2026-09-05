@@ -12,8 +12,9 @@ export async function getExpenses(user: User): Promise<Expense[]> {
 
   const { data, error } = await supabase
     .from('expenses')
-    .select('id, title, amount, description, date, user_id, created_at')
+    .select('id, title, amount, description, date, expense_type, expense_scope, user_id, created_at')
     .eq('user_id', user.id)
+    .eq('expense_scope', 'daily')
     .order('date', { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -28,6 +29,8 @@ export async function addExpense(user: User, input: NewExpenseInput): Promise<Ex
     amount: Number(input.amount),
     description: input.description?.trim() || undefined,
     date: input.date,
+    expense_type: input.expense_type,
+    expense_scope: input.expense_scope,
     user_id: user.id,
     created_at: new Date().toISOString()
   };
@@ -43,9 +46,11 @@ export async function addExpense(user: User, input: NewExpenseInput): Promise<Ex
       amount: payload.amount,
       description: payload.description,
       date: payload.date,
+      expense_type: payload.expense_type,
+      expense_scope: 'daily',
       user_id: payload.user_id
     })
-    .select('id, title, amount, description, date, user_id, created_at')
+    .select('id, title, amount, description, date, expense_type, expense_scope, user_id, created_at')
     .single();
 
   if (error) throw new Error(error.message);
@@ -63,11 +68,13 @@ export async function updateExpense(user: User, expenseId: string, input: NewExp
       title: input.title.trim(),
       amount: Number(input.amount),
       description: input.description?.trim() || null,
-      date: input.date
+      date: input.date,
+      expense_type: input.expense_type,
+      expense_scope: 'daily'
     })
     .eq('id', expenseId)
     .eq('user_id', user.id)
-    .select('id, title, amount, description, date, user_id, created_at')
+    .select('id, title, amount, description, date, expense_type, expense_scope, user_id, created_at')
     .single();
 
   if (error) throw new Error(error.message);

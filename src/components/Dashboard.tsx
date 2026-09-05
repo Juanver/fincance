@@ -1,19 +1,56 @@
-import { type FocusEvent, FormEvent, useMemo, useState } from 'react';
-import type { Expense, Income, NewExpenseInput, NewIncomeInput, User } from '../types';
+import { type FocusEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import type {
+  CreditCardExpense,
+  CreditCardPayment,
+  Expense,
+  ExpenseScope,
+  ExpenseType,
+  Income,
+  NewCreditCardPaymentInput,
+  NewCreditCardExpenseInput,
+  NewExpenseInput,
+  NewIncomeInput,
+  User
+} from '../types';
 
 type DashboardProps = {
   user: User;
   expenses: Expense[];
+  creditCardExpenses: CreditCardExpense[];
+  creditCardPayments: CreditCardPayment[];
+  creditLine: number;
+  creditLineConfigured: boolean;
   incomes: Income[];
   onCreateExpense: (input: NewExpenseInput) => Promise<void>;
   onUpdateExpense: (expenseId: string, input: NewExpenseInput) => Promise<void>;
   onDeleteExpense: (expenseId: string) => Promise<void>;
+  onCreateCreditCardExpense: (input: NewCreditCardExpenseInput) => Promise<void>;
+  onUpdateCreditCardExpense: (expenseId: string, input: NewCreditCardExpenseInput) => Promise<void>;
+  onDeleteCreditCardExpense: (expenseId: string) => Promise<void>;
+  onSetInitialCreditLine: (creditLine: number) => Promise<void>;
+  onCreateCreditCardPayment: (input: NewCreditCardPaymentInput) => Promise<void>;
   onCreateIncome: (input: NewIncomeInput) => Promise<void>;
   onUpdateIncome: (incomeId: string, input: NewIncomeInput) => Promise<void>;
   onDeleteIncome: (incomeId: string) => Promise<void>;
   onSignOut: () => Promise<void>;
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
+};
+
+const EXPENSE_TYPE_OPTIONS: ExpenseType[] = [
+  'comida',
+  'deudas',
+  'futbol',
+  'medicina',
+  'departamento',
+  'servicios',
+  'entretenimiento',
+  'otros'
+];
+
+const EXPENSE_SCOPE_LABELS: Record<ExpenseScope, string> = {
+  daily: 'Gasto diario',
+  credit_card: 'Tarjeta de crédito'
 };
 
 function formatCurrency(value: number) {
@@ -41,7 +78,7 @@ function formatDateOnly(date: string) {
   const [year, month, day] = date.split('T')[0].split('-').map(Number);
   if (!year || !month || !day) return date;
 
-  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('es-CL', {
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('es-PE', {
     timeZone: 'UTC'
   });
 }
@@ -78,10 +115,19 @@ function sumAmountsByDate(items: Array<{ amount: number; date: string }>, untilD
 export default function Dashboard({
   user,
   expenses,
+  creditCardExpenses,
+  creditCardPayments,
+  creditLine,
+  creditLineConfigured,
   incomes,
   onCreateExpense,
   onUpdateExpense,
   onDeleteExpense,
+  onCreateCreditCardExpense,
+  onUpdateCreditCardExpense,
+  onDeleteCreditCardExpense,
+  onSetInitialCreditLine,
+  onCreateCreditCardPayment,
   onCreateIncome,
   onUpdateIncome,
   onDeleteIncome,
@@ -92,40 +138,121 @@ export default function Dashboard({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [entryType, setEntryType] = useState<'expense' | 'income'>('expense');
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [editingCreditCardExpenseId, setEditingCreditCardExpenseId] = useState<string | null>(null);
   const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const [expenseType, setExpenseType] = useState<ExpenseType>('otros');
+  const [expenseScope, setExpenseScope] = useState<ExpenseScope>('daily');
+  const [activeExpenseTab, setActiveExpenseTab] = useState<ExpenseScope>('daily');
+  const [activeReportTab, setActiveReportTab] = useState<ExpenseScope>('daily');
+  const [showCreditLineForm, setShowCreditLineForm] = useState(false);
+  const [showCardPaymentForm, setShowCardPaymentForm] = useState(false);
+  const [creditLineInput, setCreditLineInput] = useState('');
+  const [cardPaymentAmount, setCardPaymentAmount] = useState('');
+  const [cardPaymentDate, setCardPaymentDate] = useState(getTodayLocalDate());
+  const [cardPaymentNote, setCardPaymentNote] = useState('');
+  const [cardControlLoading, setCardControlLoading] = useState(false);
   const [date, setDate] = useState(getTodayLocalDate());
   const [reportDate, setReportDate] = useState(getTodayLocalDate());
   const [loading, setLoading] = useState(false);
   const [deletingExpenseId, setDeletingExpenseId] = useState<string | null>(null);
+  const [deletingCreditCardExpenseId, setDeletingCreditCardExpenseId] = useState<string | null>(null);
   const [deletingIncomeId, setDeletingIncomeId] = useState<string | null>(null);
   const [deleteModalData, setDeleteModalData] = useState<{
     id: string;
     title: string;
-    type: 'expense' | 'income';
+    type: 'expense' | 'credit_card_expense' | 'income';
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const spending = useMemo(() => calcSpendingAverages(expenses), [expenses]);
+  const dailyExpenses = useMemo(() => expenses, [expenses]);
+  const spending = useMemo(() => calcSpendingAverages(dailyExpenses), [dailyExpenses]);
+  const visibleExpenses = activeExpenseTab === 'daily' ? dailyExpenses : creditCardExpenses;
   const totalIncome = useMemo(
     () => incomes.reduce((acc, income) => acc + Number(income.amount), 0),
     [incomes]
   );
   const currentBalance = totalIncome - spending.totalSpent;
 
+  useEffect(() => {
+    if (creditLineConfigured) {
+      setShowCreditLineForm(false);
+      setCreditLineInput(String(creditLine));
+    }
+  }, [creditLine, creditLineConfigured]);
+
   const report = useMemo(() => {
     const incomeUntilDate = sumAmountsByDate(incomes, reportDate);
-    const expenseUntilDate = sumAmountsByDate(expenses, reportDate);
+    const creditCardPaymentsUntilDate = creditCardPayments
+      .filter((payment) => payment.payment_date <= reportDate)
+      .reduce((acc, payment) => acc + Number(payment.amount), 0);
+    const creditCardIncomeUntilDate = creditLine + creditCardPaymentsUntilDate;
+    const dailyExpenseUntilDate = sumAmountsByDate(dailyExpenses, reportDate);
+    const creditCardExpenseUntilDate = sumAmountsByDate(creditCardExpenses, reportDate);
     return {
       incomeUntilDate,
-      expenseUntilDate,
-      balanceUntilDate: incomeUntilDate - expenseUntilDate
+      creditCardIncomeUntilDate,
+      creditCardPaymentsUntilDate,
+      dailyExpenseUntilDate,
+      creditCardExpenseUntilDate,
+      balanceUntilDate: incomeUntilDate - dailyExpenseUntilDate,
+      balanceWithCreditCardUntilDate: creditCardIncomeUntilDate - creditCardExpenseUntilDate
     };
-  }, [expenses, incomes, reportDate]);
+  }, [creditCardExpenses, creditCardPayments, creditLine, dailyExpenses, incomes, reportDate]);
 
-  const handleFieldFocus = (event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleSetInitialCreditLine = async () => {
+    const parsed = Number(creditLineInput);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setError('La línea de crédito debe ser mayor que 0');
+      return;
+    }
+
+    setError(null);
+    setCardControlLoading(true);
+    try {
+      await onSetInitialCreditLine(parsed);
+      setShowCreditLineForm(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible registrar la línea de crédito inicial');
+    } finally {
+      setCardControlLoading(false);
+    }
+  };
+
+  const handleCreateCardPayment = async () => {
+    const parsed = Number(cardPaymentAmount);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setError('El pago de tarjeta debe ser mayor que 0');
+      return;
+    }
+
+    if (!cardPaymentDate) {
+      setError('La fecha del pago es obligatoria');
+      return;
+    }
+
+    setError(null);
+    setCardControlLoading(true);
+    try {
+      await onCreateCreditCardPayment({
+        amount: parsed,
+        payment_date: cardPaymentDate,
+        note: cardPaymentNote
+      });
+      setCardPaymentAmount('');
+      setCardPaymentDate(getTodayLocalDate());
+      setCardPaymentNote('');
+      setShowCardPaymentForm(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible registrar el pago de tarjeta');
+    } finally {
+      setCardControlLoading(false);
+    }
+  };
+
+  const handleFieldFocus = (event: FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const element = event.currentTarget;
     window.setTimeout(() => {
       element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -134,10 +261,13 @@ export default function Dashboard({
 
   const resetForm = () => {
     setEditingExpenseId(null);
+    setEditingCreditCardExpenseId(null);
     setEditingIncomeId(null);
     setTitle('');
     setAmount('');
     setDescription('');
+    setExpenseType('otros');
+    setExpenseScope('daily');
     setDate(getTodayLocalDate());
   };
 
@@ -151,10 +281,28 @@ export default function Dashboard({
   const openEditExpenseModal = (expense: Expense) => {
     setEntryType('expense');
     setEditingExpenseId(expense.id);
+    setEditingCreditCardExpenseId(null);
     setEditingIncomeId(null);
     setTitle(expense.title);
     setAmount(String(expense.amount));
     setDescription(expense.description ?? '');
+    setExpenseType(expense.expense_type ?? 'otros');
+    setExpenseScope(expense.expense_scope ?? 'daily');
+    setDate(expense.date);
+    setError(null);
+    setIsModalOpen(true);
+  };
+
+  const openEditCreditCardExpenseModal = (expense: CreditCardExpense) => {
+    setEntryType('expense');
+    setEditingCreditCardExpenseId(expense.id);
+    setEditingExpenseId(null);
+    setEditingIncomeId(null);
+    setTitle(expense.title);
+    setAmount(String(expense.amount));
+    setDescription(expense.description ?? '');
+    setExpenseType(expense.expense_type ?? 'otros');
+    setExpenseScope('credit_card');
     setDate(expense.date);
     setError(null);
     setIsModalOpen(true);
@@ -164,9 +312,12 @@ export default function Dashboard({
     setEntryType('income');
     setEditingIncomeId(income.id);
     setEditingExpenseId(null);
+    setEditingCreditCardExpenseId(null);
     setTitle(income.title);
     setAmount(String(income.amount));
     setDescription(income.description ?? '');
+    setExpenseType('otros');
+    setExpenseScope('daily');
     setDate(income.date);
     setError(null);
     setIsModalOpen(true);
@@ -189,20 +340,42 @@ export default function Dashboard({
 
     setLoading(true);
     try {
-      if (entryType === 'expense' && editingExpenseId) {
-        await onUpdateExpense(editingExpenseId, {
-          title,
-          amount: parsedAmount,
-          description,
-          date
-        });
-      } else if (entryType === 'expense') {
-        await onCreateExpense({
-          title,
-          amount: parsedAmount,
-          description,
-          date
-        });
+      if (entryType === 'expense') {
+        if (expenseScope === 'credit_card' && editingCreditCardExpenseId) {
+          await onUpdateCreditCardExpense(editingCreditCardExpenseId, {
+            title,
+            amount: parsedAmount,
+            description,
+            date,
+            expense_type: expenseType
+          });
+        } else if (expenseScope === 'credit_card') {
+          await onCreateCreditCardExpense({
+            title,
+            amount: parsedAmount,
+            description,
+            date,
+            expense_type: expenseType
+          });
+        } else if (editingExpenseId) {
+          await onUpdateExpense(editingExpenseId, {
+            title,
+            amount: parsedAmount,
+            description,
+            date,
+            expense_type: expenseType,
+            expense_scope: 'daily'
+          });
+        } else {
+          await onCreateExpense({
+            title,
+            amount: parsedAmount,
+            description,
+            date,
+            expense_type: expenseType,
+            expense_scope: 'daily'
+          });
+        }
       } else if (editingIncomeId) {
         await onUpdateIncome(editingIncomeId, {
           title,
@@ -228,7 +401,7 @@ export default function Dashboard({
     }
   };
 
-  const openDeleteModal = (id: string, title: string, type: 'expense' | 'income') => {
+  const openDeleteModal = (id: string, title: string, type: 'expense' | 'credit_card_expense' | 'income') => {
     setDeleteModalData({ id, title, type });
   };
 
@@ -241,6 +414,13 @@ export default function Dashboard({
         setDeletingExpenseId(deleteModalData.id);
         await onDeleteExpense(deleteModalData.id);
         if (editingExpenseId === deleteModalData.id) {
+          setIsModalOpen(false);
+          resetForm();
+        }
+      } else if (deleteModalData.type === 'credit_card_expense') {
+        setDeletingCreditCardExpenseId(deleteModalData.id);
+        await onDeleteCreditCardExpense(deleteModalData.id);
+        if (editingCreditCardExpenseId === deleteModalData.id) {
           setIsModalOpen(false);
           resetForm();
         }
@@ -264,6 +444,7 @@ export default function Dashboard({
       );
     } finally {
       setDeletingExpenseId(null);
+      setDeletingCreditCardExpenseId(null);
       setDeletingIncomeId(null);
     }
   };
@@ -355,7 +536,31 @@ export default function Dashboard({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Reporte hasta una fecha</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Calcula tu saldo acumulado hasta el día seleccionado.</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Separa el reporte entre gasto diario y tarjeta de crédito.</p>
+              <div className="mt-2 inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setActiveReportTab('daily')}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition sm:text-sm ${
+                    activeReportTab === 'daily'
+                      ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100'
+                  }`}
+                >
+                  Gasto diario
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveReportTab('credit_card')}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition sm:text-sm ${
+                    activeReportTab === 'credit_card'
+                      ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100'
+                  }`}
+                >
+                  Tarjeta de crédito
+                </button>
+              </div>
             </div>
             <div className="w-full sm:w-56">
               <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">Fecha de corte</label>
@@ -363,29 +568,147 @@ export default function Dashboard({
             </div>
           </div>
 
+          {activeReportTab === 'credit_card' && (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={creditLineConfigured}
+                onClick={() => {
+                  setShowCreditLineForm((prev) => !prev);
+                  setShowCardPaymentForm(false);
+                }}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {creditLineConfigured ? 'Línea inicial registrada' : 'Registrar línea de crédito inicial'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCardPaymentForm((prev) => !prev);
+                  setShowCreditLineForm(false);
+                }}
+                className="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+              >
+                Registrar pago de tarjeta
+              </button>
+            </div>
+          )}
+
+          {activeReportTab === 'credit_card' && showCreditLineForm && !creditLineConfigured && (
+            <div className="mt-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">Monto inicial de línea de crédito</label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={creditLineInput}
+                  onFocus={handleFieldFocus}
+                  onChange={(e) => setCreditLineInput(e.target.value)}
+                  placeholder="Ej: 5000"
+                />
+                <button
+                  type="button"
+                  disabled={cardControlLoading}
+                  onClick={() => void handleSetInitialCreditLine()}
+                  className="rounded-lg bg-brand-500 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-70"
+                >
+                  {cardControlLoading ? 'Guardando...' : 'Guardar línea inicial'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeReportTab === 'credit_card' && showCardPaymentForm && (
+            <div className="mt-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">Monto pagado</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={cardPaymentAmount}
+                    onFocus={handleFieldFocus}
+                    onChange={(e) => setCardPaymentAmount(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">Fecha de pago</label>
+                  <input
+                    type="date"
+                    value={cardPaymentDate}
+                    onFocus={handleFieldFocus}
+                    onChange={(e) => setCardPaymentDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">Nota (opcional)</label>
+                  <input
+                    value={cardPaymentNote}
+                    onFocus={handleFieldFocus}
+                    onChange={(e) => setCardPaymentNote(e.target.value)}
+                    placeholder="Ej: pago septiembre"
+                  />
+                </div>
+              </div>
+              <div className="mt-2">
+                <button
+                  type="button"
+                  disabled={cardControlLoading}
+                  onClick={() => void handleCreateCardPayment()}
+                  className="rounded-lg bg-emerald-500 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-70"
+                >
+                  {cardControlLoading ? 'Guardando...' : 'Guardar pago'}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="mt-3 grid gap-2 sm:mt-4 sm:grid-cols-3 sm:gap-3">
             <div className="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/70 sm:rounded-xl sm:p-3">
-              <p className="text-xs text-slate-500 dark:text-slate-400">Ingresos acumulados</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {activeReportTab === 'daily' ? 'Ingresos acumulados' : 'Línea + pagos acumulados'}
+              </p>
               <p className="mt-1 text-base font-semibold text-emerald-600 dark:text-emerald-400">
-                {formatCurrency(report.incomeUntilDate)}
+                {formatCurrency(activeReportTab === 'daily' ? report.incomeUntilDate : report.creditCardIncomeUntilDate)}
               </p>
             </div>
             <div className="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/70 sm:rounded-xl sm:p-3">
-              <p className="text-xs text-slate-500 dark:text-slate-400">Gastos acumulados</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {activeReportTab === 'daily' ? 'Gastos diarios acumulados' : 'Gastos tarjeta acumulados'}
+              </p>
               <p className="mt-1 text-base font-semibold text-rose-600 dark:text-rose-400">
-                {formatCurrency(report.expenseUntilDate)}
+                {formatCurrency(
+                  activeReportTab === 'daily' ? report.dailyExpenseUntilDate : report.creditCardExpenseUntilDate
+                )}
               </p>
             </div>
             <div className="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/70 sm:rounded-xl sm:p-3">
-              <p className="text-xs text-slate-500 dark:text-slate-400">Saldo acumulado</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {activeReportTab === 'daily' ? 'Saldo acumulado (sin tarjeta)' : 'Disponible de crédito acumulado'}
+              </p>
               <p
                 className={`mt-1 text-base font-semibold ${
-                  report.balanceUntilDate >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                  (activeReportTab === 'daily' ? report.balanceUntilDate : report.balanceWithCreditCardUntilDate) >= 0
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-rose-600 dark:text-rose-400'
                 }`}
               >
-                {formatCurrency(report.balanceUntilDate)}
+                {formatCurrency(
+                  activeReportTab === 'daily' ? report.balanceUntilDate : report.balanceWithCreditCardUntilDate
+                )}
               </p>
             </div>
+            {activeReportTab === 'credit_card' && (
+              <div className="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/70 sm:rounded-xl sm:p-3 sm:col-span-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Pagos de tarjeta acumulados</p>
+                <p className="mt-1 text-base font-semibold text-emerald-600 dark:text-emerald-400">
+                  {formatCurrency(report.creditCardPaymentsUntilDate)}
+                </p>
+              </div>
+            )}
           </div>
         </section>
 
@@ -409,19 +732,55 @@ export default function Dashboard({
         <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:mt-6">
           <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
             <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Gastos recientes</h2>
+            <div className="mt-3 inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+              <button
+                type="button"
+                onClick={() => setActiveExpenseTab('daily')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition sm:text-sm ${
+                  activeExpenseTab === 'daily'
+                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100'
+                }`}
+              >
+                Gastos diarios ({dailyExpenses.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveExpenseTab('credit_card')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition sm:text-sm ${
+                  activeExpenseTab === 'credit_card'
+                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100'
+                }`}
+              >
+                Tarjeta de crédito ({creditCardExpenses.length})
+              </button>
+            </div>
           </div>
 
-          {expenses.length === 0 ? (
-            <p className="p-4 text-sm text-slate-500 dark:text-slate-400">Aún no hay gastos registrados.</p>
+          {visibleExpenses.length === 0 ? (
+            <p className="p-4 text-sm text-slate-500 dark:text-slate-400">
+              {activeExpenseTab === 'daily'
+                ? 'Aún no hay gastos diarios registrados.'
+                : 'Aún no hay gastos con tarjeta registrados.'}
+            </p>
           ) : (
             <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {expenses.map((expense) => (
+              {visibleExpenses.map((expense) => (
                 <li key={expense.id} className="flex flex-col gap-2 px-4 py-3 sm:gap-3">
                   <div>
                     <p className="break-words font-medium text-slate-900 dark:text-slate-100">{expense.title}</p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
                       {formatDateOnly(expense.date)}
                     </p>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-300/50 dark:bg-slate-100 dark:text-slate-900">
+                        {expense.expense_type ?? 'otros'}
+                      </span>
+                      <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700 dark:border-slate-300/50 dark:bg-slate-100 dark:text-slate-900">
+                        {EXPENSE_SCOPE_LABELS[activeExpenseTab]}
+                      </span>
+                    </div>
                     {expense.description && (
                       <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{expense.description}</p>
                     )}
@@ -434,18 +793,36 @@ export default function Dashboard({
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => openEditExpenseModal(expense)}
+                        onClick={() =>
+                          activeExpenseTab === 'daily'
+                            ? openEditExpenseModal(expense as Expense)
+                            : openEditCreditCardExpenseModal(expense as CreditCardExpense)
+                        }
                         className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                       >
                         Editar
                       </button>
                       <button
                         type="button"
-                        disabled={deletingExpenseId === expense.id}
-                        onClick={() => openDeleteModal(expense.id, expense.title, 'expense')}
+                        disabled={
+                          activeExpenseTab === 'daily'
+                            ? deletingExpenseId === expense.id
+                            : deletingCreditCardExpenseId === expense.id
+                        }
+                        onClick={() =>
+                          openDeleteModal(
+                            expense.id,
+                            expense.title,
+                            activeExpenseTab === 'daily' ? 'expense' : 'credit_card_expense'
+                          )
+                        }
                         className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-70 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"
                       >
-                        {deletingExpenseId === expense.id ? 'Eliminando...' : 'Eliminar'}
+                        {(activeExpenseTab === 'daily'
+                          ? deletingExpenseId === expense.id
+                          : deletingCreditCardExpenseId === expense.id)
+                          ? 'Eliminando...'
+                          : 'Eliminar'}
                       </button>
                     </div>
                   </div>
@@ -511,8 +888,10 @@ export default function Dashboard({
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
                 {entryType === 'expense'
-                  ? editingExpenseId
-                    ? 'Editar gasto'
+                  ? editingExpenseId || editingCreditCardExpenseId
+                    ? expenseScope === 'credit_card'
+                      ? 'Editar gasto de tarjeta'
+                      : 'Editar gasto'
                     : 'Nuevo gasto'
                   : editingIncomeId
                     ? 'Editar ingreso'
@@ -555,6 +934,39 @@ export default function Dashboard({
                 </div>
               </div>
 
+              {entryType === 'expense' && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Tipo de gasto</label>
+                    <select
+                      value={expenseType}
+                      onFocus={handleFieldFocus}
+                      onChange={(e) => setExpenseType(e.target.value as ExpenseType)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      {EXPENSE_TYPE_OPTIONS.map((type) => (
+                        <option key={type} value={type}>
+                          {type.charAt(0).toUpperCase() + type.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Apartado</label>
+                    <select
+                      value={expenseScope}
+                      onFocus={handleFieldFocus}
+                      onChange={(e) => setExpenseScope(e.target.value as ExpenseScope)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      <option value="daily">Gasto común diario</option>
+                      <option value="credit_card">Tarjeta de crédito</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Descripción</label>
                 <textarea
@@ -572,7 +984,7 @@ export default function Dashboard({
                 disabled={loading}
                 className={`mt-2 w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-70 ${
                   entryType === 'expense'
-                    ? editingExpenseId
+                    ? editingExpenseId || editingCreditCardExpenseId
                       ? 'bg-amber-500 hover:bg-amber-600'
                       : 'bg-brand-500 hover:bg-brand-600'
                     : 'bg-emerald-500 hover:bg-emerald-600'
@@ -581,7 +993,7 @@ export default function Dashboard({
                 {loading
                   ? 'Guardando...'
                   : entryType === 'expense'
-                    ? editingExpenseId
+                    ? editingExpenseId || editingCreditCardExpenseId
                       ? 'Guardar cambios'
                       : 'Guardar gasto'
                     : editingIncomeId
@@ -598,7 +1010,7 @@ export default function Dashboard({
           <div className="w-full rounded-t-2xl bg-white p-4 shadow-lg dark:bg-slate-900 sm:max-w-sm sm:rounded-2xl sm:p-5">
             <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Confirmar eliminación</h3>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-              ¿Seguro que quieres eliminar {deleteModalData.type === 'expense' ? 'el gasto' : 'el ingreso'} "
+              ¿Seguro que quieres eliminar {deleteModalData.type === 'income' ? 'el ingreso' : 'el gasto'} "
               {deleteModalData.title}"? Esta acción no se puede deshacer.
             </p>
 
@@ -612,11 +1024,11 @@ export default function Dashboard({
               </button>
               <button
                 type="button"
-                disabled={Boolean(deletingExpenseId || deletingIncomeId)}
+                disabled={Boolean(deletingExpenseId || deletingCreditCardExpenseId || deletingIncomeId)}
                 onClick={() => void handleDeleteConfirmed()}
                 className="rounded-xl bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-70"
               >
-                {deletingExpenseId || deletingIncomeId ? 'Eliminando...' : 'Eliminar'}
+                {deletingExpenseId || deletingCreditCardExpenseId || deletingIncomeId ? 'Eliminando...' : 'Eliminar'}
               </button>
             </div>
           </div>

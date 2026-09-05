@@ -72,6 +72,8 @@ create table if not exists public.expenses (
   title text not null,
   amount numeric not null,
   description text,
+   expense_type text not null default 'otros',
+   expense_scope text not null default 'daily' check (expense_scope in ('daily', 'credit_card')),
   date date not null default now(),
   created_at timestamptz not null default now()
 );
@@ -86,8 +88,20 @@ create table if not exists public.incomes (
    created_at timestamptz not null default now()
 );
 
+create table if not exists public.credit_card_expenses (
+   id uuid primary key default gen_random_uuid(),
+   user_id uuid not null,
+   title text not null,
+   amount numeric not null,
+   description text,
+   expense_type text not null default 'otros',
+   date date not null default now(),
+   created_at timestamptz not null default now()
+);
+
 alter table public.expenses enable row level security;
 alter table public.incomes enable row level security;
+alter table public.credit_card_expenses enable row level security;
 
 create policy "read own expenses"
 on public.expenses
@@ -138,6 +152,55 @@ on public.incomes
 for delete
 to authenticated
 using (auth.uid() = user_id);
+
+create policy "read own credit card expenses"
+on public.credit_card_expenses
+for select
+to authenticated
+using (auth.uid() = user_id);
+
+create policy "insert own credit card expenses"
+on public.credit_card_expenses
+for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+create policy "update own credit card expenses"
+on public.credit_card_expenses
+for update
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "delete own credit card expenses"
+on public.credit_card_expenses
+for delete
+to authenticated
+using (auth.uid() = user_id);
+
+-- Si ya tenías la tabla creada, ejecuta además:
+alter table public.expenses
+   add column if not exists expense_type text not null default 'otros';
+
+alter table public.expenses
+   add column if not exists expense_scope text not null default 'daily';
+
+alter table public.expenses
+   drop constraint if exists expenses_expense_scope_check;
+
+alter table public.expenses
+   add constraint expenses_expense_scope_check
+   check (expense_scope in ('daily', 'credit_card'));
+
+-- Migración opcional (si ya tenías gastos de tarjeta dentro de expenses):
+insert into public.credit_card_expenses (id, user_id, title, amount, description, expense_type, date, created_at)
+select id, user_id, title, amount, description, coalesce(expense_type, 'otros'), date, created_at
+from public.expenses
+where expense_scope = 'credit_card'
+on conflict (id) do nothing;
+
+delete from public.expenses
+where expense_scope = 'credit_card';
 ```
 
 ### 3) Confirmación rápida

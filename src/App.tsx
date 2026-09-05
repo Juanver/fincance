@@ -1,16 +1,42 @@
 import { useEffect, useState } from 'react';
 import AuthView from './components/AuthView';
 import Dashboard from './components/Dashboard';
+import {
+  addCreditCardPayment,
+  getCreditCardPayments,
+  getCreditLineConfig,
+  setInitialCreditLine
+} from './lib/creditCardControlService';
+import {
+  addCreditCardExpense,
+  deleteCreditCardExpense,
+  getCreditCardExpenses,
+  updateCreditCardExpense
+} from './lib/creditCardExpenseService';
 import { addExpense, deleteExpense, getExpenses, updateExpense } from './lib/expenseService';
 import { addIncome, deleteIncome, getIncomes, updateIncome } from './lib/incomeService';
 import { getCurrentUser, onAuthStateChange, signInWithPassword, signOut } from './lib/supabase';
-import type { Expense, Income, NewExpenseInput, NewIncomeInput, User } from './types';
+import type {
+  CreditCardExpense,
+  CreditCardPayment,
+  Expense,
+  Income,
+  NewCreditCardPaymentInput,
+  NewCreditCardExpenseInput,
+  NewExpenseInput,
+  NewIncomeInput,
+  User
+} from './types';
 
 const THEME_STORAGE_KEY = 'finance:theme';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [creditCardExpenses, setCreditCardExpenses] = useState<CreditCardExpense[]>([]);
+  const [creditCardPayments, setCreditCardPayments] = useState<CreditCardPayment[]>([]);
+  const [creditLine, setCreditLine] = useState<number>(0);
+  const [creditLineConfigured, setCreditLineConfigured] = useState(false);
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -65,15 +91,29 @@ function App() {
   useEffect(() => {
     if (!user) {
       setExpenses([]);
+      setCreditCardExpenses([]);
+      setCreditCardPayments([]);
+      setCreditLine(0);
+      setCreditLineConfigured(false);
       setIncomes([]);
       return;
     }
 
     setFetchError(null);
 
-    Promise.all([getExpenses(user), getIncomes(user)])
-      .then(([nextExpenses, nextIncomes]) => {
+    Promise.all([
+      getExpenses(user),
+      getCreditCardExpenses(user),
+      getCreditCardPayments(user),
+      getCreditLineConfig(user),
+      getIncomes(user)
+    ])
+      .then(([nextExpenses, nextCreditCardExpenses, nextCreditCardPayments, nextCreditLine, nextIncomes]) => {
         setExpenses(nextExpenses);
+        setCreditCardExpenses(nextCreditCardExpenses);
+        setCreditCardPayments(nextCreditCardPayments);
+        setCreditLine(nextCreditLine.credit_limit);
+        setCreditLineConfigured(nextCreditLine.is_configured);
         setIncomes(nextIncomes);
       })
       .catch((error: Error) => setFetchError(error.message));
@@ -106,6 +146,41 @@ function App() {
     if (!user) return;
     await deleteExpense(user, expenseId);
     setExpenses((prev) => prev.filter((expense) => expense.id !== expenseId));
+  };
+
+  const handleCreateCreditCardExpense = async (input: NewCreditCardExpenseInput) => {
+    if (!user) return;
+    const created = await addCreditCardExpense(user, input);
+    setCreditCardExpenses((prev) => [...prev, created].sort((a, b) => b.date.localeCompare(a.date)));
+  };
+
+  const handleUpdateCreditCardExpense = async (expenseId: string, input: NewCreditCardExpenseInput) => {
+    if (!user) return;
+    const updated = await updateCreditCardExpense(user, expenseId, input);
+    setCreditCardExpenses((prev) =>
+      prev
+        .map((expense) => (expense.id === updated.id ? updated : expense))
+        .sort((a, b) => b.date.localeCompare(a.date))
+    );
+  };
+
+  const handleDeleteCreditCardExpense = async (expenseId: string) => {
+    if (!user) return;
+    await deleteCreditCardExpense(user, expenseId);
+    setCreditCardExpenses((prev) => prev.filter((expense) => expense.id !== expenseId));
+  };
+
+  const handleSetInitialCreditLine = async (nextCreditLine: number) => {
+    if (!user) return;
+    const updated = await setInitialCreditLine(user, nextCreditLine);
+    setCreditLine(updated);
+    setCreditLineConfigured(true);
+  };
+
+  const handleCreateCreditCardPayment = async (input: NewCreditCardPaymentInput) => {
+    if (!user) return;
+    const created = await addCreditCardPayment(user, input);
+    setCreditCardPayments((prev) => [...prev, created].sort((a, b) => b.payment_date.localeCompare(a.payment_date)));
   };
 
   const handleCreateIncome = async (input: NewIncomeInput) => {
@@ -161,10 +236,19 @@ function App() {
       <Dashboard
         user={user}
         expenses={expenses}
+        creditCardExpenses={creditCardExpenses}
+        creditCardPayments={creditCardPayments}
+        creditLine={creditLine}
+        creditLineConfigured={creditLineConfigured}
         incomes={incomes}
         onCreateExpense={handleCreateExpense}
         onUpdateExpense={handleUpdateExpense}
         onDeleteExpense={handleDeleteExpense}
+        onCreateCreditCardExpense={handleCreateCreditCardExpense}
+        onUpdateCreditCardExpense={handleUpdateCreditCardExpense}
+        onDeleteCreditCardExpense={handleDeleteCreditCardExpense}
+        onSetInitialCreditLine={handleSetInitialCreditLine}
+        onCreateCreditCardPayment={handleCreateCreditCardPayment}
         onCreateIncome={handleCreateIncome}
         onUpdateIncome={handleUpdateIncome}
         onDeleteIncome={handleDeleteIncome}
