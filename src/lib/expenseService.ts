@@ -2,7 +2,7 @@ import type { Expense, NewExpenseInput, User } from '../types';
 import { supabase } from './supabase';
 
 function normalizeExpenses(expenses: Expense[]) {
-  return [...expenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  return [...expenses].sort((a, b) => b.date.localeCompare(a.date));
 }
 
 export async function getExpenses(user: User): Promise<Expense[]> {

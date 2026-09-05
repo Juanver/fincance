@@ -2,7 +2,7 @@ import type { Income, NewIncomeInput, User } from '../types';
 import { supabase } from './supabase';
 
 function normalizeIncomes(incomes: Income[]) {
-  return [...incomes].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  return [...incomes].sort((a, b) => b.date.localeCompare(a.date));
 }
 
 export async function getIncomes(user: User): Promise<Income[]> {

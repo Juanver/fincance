@@ -89,9 +89,7 @@ function App() {
   const handleCreateExpense = async (input: NewExpenseInput) => {
     if (!user) return;
     const created = await addExpense(user, input);
-    setExpenses((prev) =>
-      [...prev, created].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    );
+    setExpenses((prev) => [...prev, created].sort((a, b) => b.date.localeCompare(a.date)));
   };
 
   const handleUpdateExpense = async (expenseId: string, input: NewExpenseInput) => {
@@ -100,7 +98,7 @@ function App() {
     setExpenses((prev) =>
       prev
         .map((expense) => (expense.id === updated.id ? updated : expense))
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .sort((a, b) => b.date.localeCompare(a.date))
     );
   };
 
@@ -113,9 +111,7 @@ function App() {
   const handleCreateIncome = async (input: NewIncomeInput) => {
     if (!user) return;
     const created = await addIncome(user, input);
-    setIncomes((prev) =>
-      [...prev, created].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    );
+    setIncomes((prev) => [...prev, created].sort((a, b) => b.date.localeCompare(a.date)));
   };
 
   const handleUpdateIncome = async (incomeId: string, input: NewIncomeInput) => {
@@ -124,7 +120,7 @@ function App() {
     setIncomes((prev) =>
       prev
         .map((income) => (income.id === updated.id ? updated : income))
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .sort((a, b) => b.date.localeCompare(a.date))
     );
   };
 

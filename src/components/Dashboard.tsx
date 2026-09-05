@@ -17,11 +17,33 @@ type DashboardProps = {
 };
 
 function formatCurrency(value: number) {
-  return new Intl.NumberFormat('es-CL', {
+  return new Intl.NumberFormat('es-PE', {
     style: 'currency',
-    currency: 'CLP',
+    currency: 'PEN',
     maximumFractionDigits: 0
   }).format(value);
+}
+
+function getTodayLocalDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateOnly(date: string) {
+  const [year, month, day] = date.split('T')[0].split('-').map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+}
+
+function formatDateOnly(date: string) {
+  const [year, month, day] = date.split('T')[0].split('-').map(Number);
+  if (!year || !month || !day) return date;
+
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('es-CL', {
+    timeZone: 'UTC'
+  });
 }
 
 function calcSpendingAverages(expenses: Expense[]) {
@@ -30,7 +52,7 @@ function calcSpendingAverages(expenses: Expense[]) {
   }
 
   const totalSpent = expenses.reduce((acc, expense) => acc + Number(expense.amount), 0);
-  const dates = expenses.map((expense) => new Date(expense.date)).sort((a, b) => a.getTime() - b.getTime());
+  const dates = expenses.map((expense) => parseDateOnly(expense.date)).sort((a, b) => a.getTime() - b.getTime());
   const firstDate = dates[0];
   const now = new Date();
 
@@ -48,9 +70,8 @@ function calcSpendingAverages(expenses: Expense[]) {
 }
 
 function sumAmountsByDate(items: Array<{ amount: number; date: string }>, untilDate: string) {
-  const end = new Date(`${untilDate}T23:59:59`);
   return items
-    .filter((item) => new Date(item.date).getTime() <= end.getTime())
+    .filter((item) => item.date <= untilDate)
     .reduce((acc, item) => acc + Number(item.amount), 0);
 }
 
@@ -75,8 +96,8 @@ export default function Dashboard({
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [reportDate, setReportDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(getTodayLocalDate());
+  const [reportDate, setReportDate] = useState(getTodayLocalDate());
   const [loading, setLoading] = useState(false);
   const [deletingExpenseId, setDeletingExpenseId] = useState<string | null>(null);
   const [deletingIncomeId, setDeletingIncomeId] = useState<string | null>(null);
@@ -117,7 +138,7 @@ export default function Dashboard({
     setTitle('');
     setAmount('');
     setDescription('');
-    setDate(new Date().toISOString().slice(0, 10));
+    setDate(getTodayLocalDate());
   };
 
   const openCreateModal = (type: 'expense' | 'income') => {
@@ -399,7 +420,7 @@ export default function Dashboard({
                   <div>
                     <p className="break-words font-medium text-slate-900 dark:text-slate-100">{expense.title}</p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {new Date(expense.date).toLocaleDateString('es-CL')}
+                      {formatDateOnly(expense.date)}
                     </p>
                     {expense.description && (
                       <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{expense.description}</p>
@@ -448,7 +469,7 @@ export default function Dashboard({
                   <div>
                     <p className="break-words font-medium text-slate-900 dark:text-slate-100">{income.title}</p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {new Date(income.date).toLocaleDateString('es-CL')}
+                      {formatDateOnly(income.date)}
                     </p>
                     {income.description && (
                       <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{income.description}</p>
